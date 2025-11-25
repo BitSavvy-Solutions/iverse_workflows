@@ -6,7 +6,8 @@
       "type": "httpTrigger",
       "direction": "in",
       "name": "req",
-      "methods": ["post", "get"]
+      "methods": ["post", "get"],
+      "route": "DailyReportGenerator"
     },
     {
       "type": "http",

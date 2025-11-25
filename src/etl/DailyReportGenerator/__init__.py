@@ -122,6 +122,7 @@ def run_etl_pipeline(
         course_db = client['coursedb']
         
         circles_collection = user_db['circles']
+        circle_members_collection = user_db['circleMembers']  # NEW: For memberships
         progress_collection = course_db['progress']
         reports_collection = course_db['reports']
 
@@ -163,13 +164,12 @@ def run_etl_pipeline(
                     error_count += 1
                     continue
 
-                circle_name = circle_doc.get('circleName', 'Unknown Circle')
-                logging.info(f'INFO - Processing circle: {circle_name} ({circle_id})')
+                logging.info(f'INFO - Processing circle: {circle_id}')
 
-                # Query memberships for this circle
-                memberships = list(circles_collection.find({
+                # Query memberships for this circle in circleMembers collection
+                memberships = list(circle_members_collection.find({
                     'circleId': circle_id,
-                    'userRole': 'student'
+                    'role': 'mentee'
                 }))
                 student_ids = [m.get('userId') for m in memberships]
 
@@ -192,7 +192,6 @@ def run_etl_pipeline(
                 
                 report = generate_report(
                     circle_id,
-                    circle_name,
                     len(memberships),  # Total students count
                     progress_data, 
                     report_date, 
@@ -246,7 +245,6 @@ def run_etl_pipeline(
 
 def generate_report(
     circle_id: str,
-    circle_name: str,
     total_students: int,
     progress_data: List[Dict[str, Any]], 
     report_date: str,
@@ -258,7 +256,6 @@ def generate_report(
     
     Args:
         circle_id: Circle ID
-        circle_name: Circle name
         total_students: Total student count
         progress_data: List of progress entries
         report_date: Date string (YYYY-MM-DD)
@@ -346,7 +343,6 @@ def generate_report(
     return {
         'reportId': f'{circle_id}_{report_date}',
         'circleId': circle_id,
-        'circleName': circle_name,
         'reportDate': report_date,
         'reportPeriod': {
             'startTime': start_time.isoformat(),
