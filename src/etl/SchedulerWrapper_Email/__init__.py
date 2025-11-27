@@ -14,19 +14,11 @@ def main(myTimer: func.TimerRequest) -> None:
         # Get function URL (local or deployed)
         function_url = os.environ.get('FUNCTION_APP_URL', 'http://localhost:7071')
         endpoint = f"{function_url}/api/EmailReportService"
-        
-        # Get function key from environment (only needed in production)
-        function_key = os.environ.get('EMAIL_REPORT_FUNCTION_KEY')
-        
-        headers = {}
-        if function_key:
-            headers['x-functions-key'] = function_key
-        
+                
         # Call the HTTP endpoint (no parameters = yesterday's reports for all circles)
         response = requests.post(
             endpoint,
             json={},
-            headers=headers,
             timeout=600  # 10 minutes timeout
         )
         

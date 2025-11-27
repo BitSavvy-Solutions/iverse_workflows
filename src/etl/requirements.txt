@@ -4,3 +4,4 @@ pymongo
 python-dotenv
 requests==2.32.5
 azure-storage-blob
+azure-communication-email

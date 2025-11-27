@@ -1,9 +1,7 @@
 import logging
-import smtplib
 import os
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from typing import List
+from azure.communication.email import EmailClient
 
 def send_email(
     recipients: List[str],
@@ -12,7 +10,7 @@ def send_email(
     body_text: str
 ) -> bool:
     """
-    Send email via SMTP.
+    Send email via Azure Communication Services.
     
     Args:
         recipients: List of email addresses
@@ -29,41 +27,48 @@ def send_email(
         return False
     
     try:
-        # Get SMTP configuration from environment
-        smtp_host = os.environ.get('EMAIL_SMTP_HOST')
-        smtp_port = int(os.environ.get('EMAIL_SMTP_PORT'))
+        # Get Azure Communication Services connection string
+        connection_string = os.environ.get('COMMUNICATION_SERVICES_CONNECTION_STRING')
         from_address = os.environ.get('EMAIL_FROM_ADDRESS')
-        from_password = os.environ.get('EMAIL_FROM_PASSWORD')
-        from_name = os.environ.get('EMAIL_FROM_NAME', 'AITUT Learning Platform')
         
         # Validate configuration
-        if not all([smtp_host, from_address, from_password]):
-            logging.error('Email configuration incomplete. Check environment variables.')
+        if not all([connection_string, from_address]):
+            logging.error('Azure Communication Services configuration incomplete.')
             return False
         
-        # Create message
-        message = MIMEMultipart('alternative')
-        message['Subject'] = subject
-        message['From'] = f'{from_name} <{from_address}>'
-        message['To'] = ', '.join(recipients)
+        # Create email client
+        client = EmailClient.from_connection_string(connection_string) 
         
-        # Attach both plain text and HTML versions
-        part_text = MIMEText(body_text, 'plain')
-        part_html = MIMEText(body_html, 'html')
-        
-        message.attach(part_text)
-        message.attach(part_html)
-        
+        # Build email message
+        message = {
+            "senderAddress": from_address,
+            "recipients": {
+                "to": [{"address": email} for email in recipients]
+            },
+            "content": {
+                "subject": subject,
+                "plainText": body_text,
+                "html": body_html
+            }
+        }
+
         # Send email
-        logging.info(f'Connecting to SMTP server: {smtp_host}:{smtp_port}')
+        logging.info(f'Sending email via Azure Communication Services to {len(recipients)} recipient(s)')
         
-        with smtplib.SMTP_SSL(smtp_host, smtp_port) as server:
-            server.login(from_address, from_password)
-            server.send_message(message)
-        
-        logging.info(f'✅ Email sent successfully to {len(recipients)} recipient(s)')
+        poller = client.begin_send(message)
+        result = poller.result()
+
+        # Handle if Azure returns a Dictionary OR an Object
+        if isinstance(result, dict):
+            # In the dict, the key is usually 'messageId' (camelCase)
+            msg_id = result.get("messageId") 
+        else:
+            # In the object, the attribute is usually 'message_id' (snake_case)
+            msg_id = getattr(result, "message_id", "Unknown ID")
+
+        logging.info(f'✅ Email sent successfully. Message ID: {msg_id}')
         return True
-        
+            
     except Exception as error:
         logging.error(f'❌ Failed to send email: {str(error)}', exc_info=True)
         return False
