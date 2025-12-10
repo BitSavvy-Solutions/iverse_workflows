@@ -43,7 +43,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                     mimetype="application/json"
                 )
         else:
-            end_time = datetime.now(timezone.utc)
+            # Get yesterday's end time (23:59:59 of previous day)
+            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+            end_time = yesterday.replace(hour=23, minute=59, second=59)
         
         start_time_24h = end_time - timedelta(hours=24)
         report_date = end_time.strftime('%Y-%m-%d')
@@ -169,7 +171,7 @@ def run_etl_pipeline(
                 # Query memberships for this circle in circleMembers collection
                 memberships = list(circle_members_collection.find({
                     'circleId': circle_id,
-                    'role': 'mentee'
+                    'role': 'student'
                 }))
                 student_ids = [m.get('userId') for m in memberships]
 
@@ -180,7 +182,7 @@ def run_etl_pipeline(
                 # Fetch progress data for these students
                 progress_query = {
                     'userId': {'$in': student_ids},
-                    'submittedAt': {'$gte': start_time_24h, '$lte': end_time}
+                    'createdAt': {'$gte': start_time_24h, '$lte': end_time}
                 }
                 progress_data = list(progress_collection.find(progress_query))
 

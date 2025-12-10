@@ -353,7 +353,6 @@ def get_recipients(circle_id: str) -> List[str]:
         # Step 1: Get mentor userIds from circles collection
         mentor_memberships = circle_members_collection.find({
             'circleId': circle_id,
-            'role': 'mentor'
         })
         
         mentor_user_ids = [doc['userId'] for doc in mentor_memberships]
