@@ -14,11 +14,18 @@ def main(myTimer: func.TimerRequest) -> None:
         # Get function URL (local or deployed)
         function_url = os.environ.get('FUNCTION_APP_URL', 'http://localhost:7071')
         endpoint = f"{function_url}/api/DailyReportGenerator"
+        api_key = os.environ.get("INTERNAL_API_KEY")
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-functions-key": api_key
+        }
         
         # Call the HTTP endpoint (no parameters = yesterday's data for all circles)
         response = requests.post(
             endpoint,
-            json={},  
+            json={}, 
+            headers=headers, 
             timeout=600  # 10 minutes timeout
         )
         
