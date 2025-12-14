@@ -76,9 +76,9 @@ def send_daily_report_to_slack(
         completed_materials = report_data.get('completedMaterials', [])
         
         for material in completed_materials[:5]:  # Show max 5 items
-            status_emoji = "✅" if material.get('isCompleted', False) else "⏳"
+            
             update_text = material.get('updateText', 'Progress update')
-            materials_text += f"{status_emoji} {update_text}\n"
+            materials_text += f"{update_text}\n"
         
         if len(completed_materials) > 5:
             materials_text += f"_...and {len(completed_materials) - 5} more activities_\n"
@@ -87,15 +87,15 @@ def send_daily_report_to_slack(
             materials_text = "_No activities recorded today_"
         
         # Create user mention if found
-        user_greeting = f"Hey <@{slack_user_id}>! 👋" if slack_user_id else f"Hey {user_name}! 👋"
-        
+        user_mention = f"<@{slack_user_id}>" if slack_user_id else user_name
+
         # Build message blocks
         blocks = [
             {
                 "type": "header",
                 "text": {
-                    "type": "plain_text",
-                    "text": f"📚 Daily Report - {user_name}",
+                    "type": "plain_text",  
+                    "text": f"📚 Daily Report - {user_name}", 
                     "emoji": True
                 }
             },
@@ -103,7 +103,7 @@ def send_daily_report_to_slack(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"{user_greeting}\n\n*Here's your progress for {report_date}:*"
+                    "text": f"Hey {user_mention}! 👋\n\n*Here's your progress for {report_date}:*"  # ← @mention здесь
                 }
             },
             {
@@ -116,6 +116,10 @@ def send_daily_report_to_slack(
                     {
                         "type": "mrkdwn",
                         "text": f"*Completed:*\n✅ {report_data.get('completedCount', 0)} materials"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*In Progress:*\n⏳ {report_data.get('inprogressCount', 0)} materials"
                     }
                 ]
             },
