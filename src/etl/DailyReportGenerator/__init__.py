@@ -60,17 +60,51 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             circle_id_filter=circle_id_filter
         )
         
-        # Return success response
+        # Calculate duration
         duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-        response_data = {
-            "success": True,
-            "message": "Report generation completed",
-            "dataset_day": report_date,
-            "circle_id_filter": circle_id_filter,
-            "reports_generated": result['success_count'],
-            "errors": result['error_count'],
-            "duration_seconds": round(duration, 2)
-        }
+
+        # Determine appropriate response message
+        skipped_count = result.get('skipped_count', 0)
+        success_count = result['success_count']
+        error_count = result['error_count']
+
+        # Case 1: No progress data at all (early exit)
+        if success_count == 0 and error_count == 0 and skipped_count > 0:
+            response_data = {
+                "success": True,
+                "message": "No progress data found for the specified period. No reports generated.",
+                "dataset_day": report_date,
+                "circle_id_filter": circle_id_filter,
+                "reports_generated": 0,
+                "circles_evaluated": skipped_count,
+                "reason": "no_progress_data",
+                "duration_seconds": round(duration, 2)
+            }
+
+        # Case 2: Some reports generated successfully
+        elif success_count > 0:
+            response_data = {
+                "success": True,
+                "message": f"Report generation completed. {success_count} report(s) generated.",
+                "dataset_day": report_date,
+                "circle_id_filter": circle_id_filter,
+                "reports_generated": success_count,
+                "circles_skipped": skipped_count,
+                "errors": error_count,
+                "duration_seconds": round(duration, 2)
+            }
+            
+        # Case 3: Only errors occurred
+        else:
+            response_data = {
+                "success": False,
+                "message": "Report generation completed with errors. No reports generated.",
+                "dataset_day": report_date,
+                "circle_id_filter": circle_id_filter,
+                "reports_generated": 0,
+                "errors": error_count,
+                "duration_seconds": round(duration, 2)
+            }
         
         logging.info(f'HTTP Response: {json.dumps(response_data)}')
         
@@ -145,9 +179,20 @@ def run_etl_pipeline(
 
         if len(unique_circle_ids) == 0:
             logging.info('No circles found. Exiting.')
-            return {'success_count': 0, 'error_count': 0}
+            return {'success_count': 0, 'error_count': 0, 'skipped_count': 0}
 
         logging.info(f'Report period: {start_time_24h.isoformat()} to {end_time.isoformat()}')
+
+        # Get all circles that have progress data in the period
+        circles_with_progress = progress_collection.distinct('userId', {
+            'createdAt': {'$gte': start_time_24h, '$lte': end_time}
+        })
+        
+        if len(circles_with_progress) == 0:
+            logging.info(f'INFO - No progress data found for any circle in period {report_date}. Ending report generation.')
+            return {'success_count': 0, 'error_count': 0, 'skipped_count': len(unique_circle_ids)}
+        
+        logging.info(f'Found progress data from {len(circles_with_progress)} users in the period')
 
         # ========================================
         # 3. PROCESS - Generate Report for Each Circle
@@ -156,6 +201,7 @@ def run_etl_pipeline(
         reports = []
         success_count = 0
         error_count = 0
+        skipped_count = 0
 
         for circle_id in unique_circle_ids:
             try:
@@ -177,6 +223,7 @@ def run_etl_pipeline(
 
                 if len(student_ids) == 0:
                     logging.info(f'Circle {circle_id} has no students. Skipping.')
+                    skipped_count += 1
                     continue
 
                 # Fetch progress data for these students
@@ -185,6 +232,12 @@ def run_etl_pipeline(
                     'createdAt': {'$gte': start_time_24h, '$lte': end_time}
                 }
                 progress_data = list(progress_collection.find(progress_query))
+
+                # Skip if no progress data for this circle
+                if len(progress_data) == 0:
+                    logging.info(f'Circle {circle_id} has no progress data for the period. Skipping report generation.')
+                    skipped_count += 1
+                    continue
 
                 logging.info(f'Found {len(progress_data)} progress entries for circle {circle_id}')
 
@@ -226,10 +279,11 @@ def run_etl_pipeline(
         logging.info('Daily Report Generation Complete')
         logging.info(f'Total circles processed: {len(unique_circle_ids)}')
         logging.info(f'Reports generated: {success_count}')
+        logging.info(f'Circles skipped (no progress): {skipped_count}')
         logging.info(f'Errors: {error_count}')
         logging.info('========================================')
 
-        return {'success_count': success_count, 'error_count': error_count}
+        return {'success_count': success_count, 'error_count': error_count, 'skipped_count': skipped_count}
 
     except Exception as error:
         logging.error(f'Fatal error in report generation: {str(error)}')
