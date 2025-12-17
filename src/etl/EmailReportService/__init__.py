@@ -285,13 +285,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 def fetch_reports(report_date: str, circle_id_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Fetch reports from database for a specific date.
+    Only returns reports for circles with emailUpdates=true.
     
     Args:
         report_date: Date string in YYYY-MM-DD format
         circle_id_filter: Optional specific circle ID to fetch
         
     Returns:
-        List of report documents
+        List of report documents (filtered by emailUpdates)
     """
     client = None
     
@@ -301,22 +302,42 @@ def fetch_reports(report_date: str, circle_id_filter: Optional[str] = None) -> L
         client = MongoClient(connection_string)
         logging.info('Connected to Cosmos DB')
         
+        user_db = client['userdb']
         course_db = client['coursedb']
+
+        circles_collection = user_db['circles']
         reports_collection = course_db['reports']
         
-        # Build query
-        query = {'reportDate': report_date}
+        # Step 1: Get circles with emailUpdates=true
+        circle_query = {'emailUpdates': True}
+        if circle_id_filter:
+            circle_query['circleId'] = circle_id_filter
+        
+        circles_with_email = circles_collection.find(circle_query)
+        eligible_circle_ids = [doc['circleId'] for doc in circles_with_email]
+        
+        if len(eligible_circle_ids) == 0:
+            logging.info(f'No circles with emailUpdates=true found')
+            return []
+        
+        logging.info(f'Found {len(eligible_circle_ids)} circles with emailUpdates=true')
+        logging.info(f'Eligible circles: {", ".join(eligible_circle_ids)}')
+        
+        # Step 2: Build query, fetch reports only for eligible circles
+        query = {
+            'reportDate': report_date,
+            'circleId': {'$in': eligible_circle_ids}
+        }
         
         if circle_id_filter:
-            query['circleId'] = circle_id_filter
             logging.info(f'Fetching report for circle: {circle_id_filter}, date: {report_date}')
         else:
-            logging.info(f'Fetching all reports for date: {report_date}')
+            logging.info(f'Fetching all reports for {len(eligible_circle_ids)} circles with emailUpdates=true, date: {report_date}')
         
         # Execute query
         reports = list(reports_collection.find(query))
         
-        logging.info(f'Found {len(reports)} reports')
+        logging.info(f'Found {len(reports)} reports for circles with emailUpdates=true')
         
         return reports
         
