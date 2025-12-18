@@ -5,7 +5,7 @@ import os
 import json
 from pymongo import MongoClient
 from typing import List, Dict, Any, Optional
-from shared.email_service import send_email
+from shared.email_service import send_email_to_list
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -238,13 +238,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 ═══════════════════════════════════════════
                 """
                 
-                # Send email
-                success = send_email(recipients, subject, body_html, body_text)
+                accounting_email = "munk@iverse.space"
+
+                # pass the list to the new function which handles the loop internally
+                # and sends individual emails in parallel (with cc to accounting_email)
+                sent_count, error_count = send_email_to_list(
+                    recipients, 
+                    subject, 
+                    body_html, 
+                    body_text,
+                    cc_email=accounting_email
+                )
                 
-                if success:
-                    emails_sent += 1
-                else:
-                    errors += 1
+                emails_sent += sent_count
+                errors += error_count
                     
             except Exception as e:
                 logging.error(f'Error processing report {report["reportId"]}: {str(e)}', exc_info=True)

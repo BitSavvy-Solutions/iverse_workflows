@@ -1,7 +1,34 @@
 import logging
 import os
-from typing import List
+from typing import List, Tuple
 from azure.communication.email import EmailClient
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+_cached_email_client = None
+
+def get_email_client():
+    """
+    Helper function to get or create the EmailClient.
+    This implements the 'Singleton' pattern to reuse the connection.
+    """
+    global _cached_email_client
+    
+    # If already created, return immediately
+    if _cached_email_client:
+        return _cached_email_client
+        
+    # If not, create it (Happens only once per Function App instance)
+    connection_string = os.environ.get('COMMUNICATION_SERVICES_CONNECTION_STRING')
+    
+    if connection_string:
+        try:
+            _cached_email_client = EmailClient.from_connection_string(connection_string)
+            return _cached_email_client
+        except Exception as e:
+            logging.error(f"Error initializing EmailClient: {e}")
+            return None
+    return None
+
 
 def send_email(
     recipients: List[str],
@@ -10,7 +37,7 @@ def send_email(
     body_text: str
 ) -> bool:
     """
-    Send email via Azure Communication Services.
+    Send a SINGLE email to multiple recipients via Azure Communication Services.
     
     Args:
         recipients: List of email addresses
@@ -28,17 +55,15 @@ def send_email(
     
     try:
         # Get Azure Communication Services connection string
-        connection_string = os.environ.get('COMMUNICATION_SERVICES_CONNECTION_STRING')
         from_address = os.environ.get('EMAIL_FROM_ADDRESS')
+
+        client = get_email_client()
         
         # Validate configuration
-        if not all([connection_string, from_address]):
-            logging.error('Azure Communication Services configuration incomplete.')
+        if not client or not from_address:
+            logging.error('Azure Communication Services configuration incomplete or Client failed to init.')
             return False
-        
-        # Create email client
-        client = EmailClient.from_connection_string(connection_string) 
-        
+                
         # Build email message
         message = {
             "senderAddress": from_address,
@@ -72,6 +97,95 @@ def send_email(
     except Exception as error:
         logging.error(f'❌ Failed to send email: {str(error)}', exc_info=True)
         return False
+    
+
+def send_email_to_list(
+    recipients: List[str],
+    subject: str,
+    body_html: str,
+    body_text: str,
+    cc_email: str = None
+) -> Tuple[int, int]:
+    """
+    Sends individual emails to a list of recipients in PARALLEL.
+    
+    Args:
+        recipients: List of email addresses
+        subject: Email subject line
+        body_html: HTML version
+        body_text: Plain text version
+        
+    Returns:
+        Tuple containing (success_count, error_count)
+    """
+    
+    if not recipients:
+        return 0, 0
+
+    # Get connection string once
+    from_address = os.environ.get('EMAIL_FROM_ADDRESS')
+    
+    client = get_email_client()
+    
+    if not client or not from_address:
+        logging.error('Azure Communication Services configuration incomplete or Client failed to init.')
+        return 0, len(recipients)
+
+    # Helper function to send ONE email
+    def send_single(recipient_email):
+        try:
+            # Construct the recipients dictionary
+            recipients_payload = {
+                "to": [{"address": recipient_email}]
+            }
+            
+            # <--- NEW LOGIC: Add CC if provided
+            if cc_email:
+                recipients_payload["cc"] = [{"address": cc_email}]
+
+            message = {
+                "senderAddress": from_address,
+                "recipients": recipients_payload,
+                "content": {
+                    "subject": subject,
+                    "plainText": body_text,
+                    "html": body_html
+                }
+            }
+            
+            # Send and wait for result
+            poller = client.begin_send(message)
+            result = poller.result()
+            return True
+        except Exception as e:
+            logging.error(f"Failed to send to {recipient_email}: {str(e)}")
+            return False
+
+    # --- PARALLEL EXECUTION START ---
+    success_count = 0
+    error_count = 0
+    
+    # We use a ThreadPool to send multiple emails at the same time.
+    # max_workers=10, send 10 emails simultaneously.
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all tasks
+        future_to_email = {executor.submit(send_single, email): email for email in recipients}
+        
+        # Process results as they finish
+        for future in as_completed(future_to_email):
+            email = future_to_email[future]
+            try:
+                is_success = future.result()
+                if is_success:
+                    success_count += 1
+                else:
+                    error_count += 1
+            except Exception as exc:
+                logging.error(f'{email} generated an exception: {exc}')
+                error_count += 1
+                
+    logging.info(f"Batch complete. Success: {success_count}, Errors: {error_count}")
+    return success_count, error_count
 
 
 def send_test_email(recipient: str) -> bool:
