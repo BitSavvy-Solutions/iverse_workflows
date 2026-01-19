@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 import os
 from shared.slack_service import send_daily_report_to_slack
+from shared.github_service import get_material_title
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -170,42 +171,89 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         # Continue with normal flow if progress exists...
         logging.info(f'Found {len(progress_entries)} progress entries for user {user_id}')
         
-        # Calculate summary
-        total_time_seconds = sum(p.get('timeSpentSeconds', 0) for p in progress_entries)
-        completed_count = sum(1 for p in progress_entries if p.get('isCompleted', False))
-        inprogress_count = sum(1 for p in progress_entries if not p.get('isCompleted', False))
-        
-        # Format completed materials
-        completed_materials = []
+        # ========================================
+        # GROUP BY MATERIAL - Aggregate multiple entries
+        # ========================================
+
+        material_groups = {}
+
         for progress in progress_entries:
             chapter_id = progress.get('chapterId', '')
             material_id = progress.get('materialId', '')
-            update_text = progress.get('updateText', 'Progress made')
-            is_completed = progress.get('isCompleted', False)
+            key = f"{chapter_id}/{material_id}"
+            
+            if key not in material_groups:
+                material_groups[key] = {
+                    'chapterId': chapter_id,
+                    'materialId': material_id,
+                    'timeSpent': 0,
+                    'completed': False,
+                    'updateTexts': []
+                }
+            
+            # Accumulate time
+            material_groups[key]['timeSpent'] += progress.get('timeSpentSeconds', 0)
+            
+            # If any entry is completed, mark as completed
+            if progress.get('isCompleted', False):
+                material_groups[key]['completed'] = True
+            
+            # Collect all update texts
+            update_text = progress.get('updateText', '')
+            if update_text and update_text.strip():
+                material_groups[key]['updateTexts'].append(update_text)
+
+        logging.info(f'Grouped into {len(material_groups)} unique materials')
+
+        # Calculate summary from grouped data
+        total_time_seconds = sum(m['timeSpent'] for m in material_groups.values())
+        completed_count = sum(1 for m in material_groups.values() if m['completed'])
+        inprogress_count = sum(1 for m in material_groups.values() if not m['completed'])
+
+        # Format materials for Slack
+        completed_materials = []
+
+        for material in material_groups.values():
+            chapter_id = material['chapterId']
+            material_id = material['materialId']
+            is_completed = material['completed']
+            
+            # Get material title from GitHub
+            material_title = get_material_title(chapter_id, material_id)
+            
+            if material_title:
+                display_text = material_title
+            else:
+                display_text = f"{chapter_id}/{material_id}"
             
             status_emoji = "✅" if is_completed else "⏳"
-            formatted_text = f"{status_emoji} {chapter_id}/{material_id}: {update_text}"
+            formatted_text = f"{status_emoji} {display_text}"
             
+            # Add to list
             completed_materials.append({
                 'updateText': formatted_text,
-                'isCompleted': is_completed
+                'isCompleted': is_completed,
+                'materialTitle': display_text,
+                'comments': material['updateTexts']  # Store comments
             })
-        
-        # Add user comment if provided
+
+        # Add user comment to materials list (if provided)
         if user_comment:
-            completed_materials.append({
+            # Parse user comment - it already contains formatted material comments
+            # Just add as-is to the beginning
+            completed_materials.insert(0, {
                 'updateText': f"💭 {user_comment}",
                 'isCompleted': False
             })
-        
+
         # Prepare report data for Slack
         report_data = {
             'totalTimeSpent': total_time_seconds,
             'completedCount': completed_count,
-            'completedMaterials': completed_materials,
-            'inprogressCount': inprogress_count
+            'inprogressCount': inprogress_count,
+            'completedMaterials': completed_materials
         }
-        
+
         # Send to Slack
         success = send_daily_report_to_slack(
             user_name=user_name,
@@ -213,16 +261,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             report_data=report_data,
             report_date=datetime.now(timezone.utc).strftime('%Y-%m-%d')
         )
-        
+
         client.close()
-        
+
         if success:
             logging.info(f'✅ Daily progress shared to Slack for user: {user_name}')
             return func.HttpResponse(
                 json.dumps({
                     "success": True,
-                    "message": f"Your daily update with {len(progress_entries)} activities shared to Slack community! 🎉",
-                    "activitiesCount": len(progress_entries),
+                    "message": f"Your daily update with {len(material_groups)} activities shared to Slack community! 🎉",
+                    "activitiesCount": len(material_groups),  # Unique materials count
                     "completedCount": completed_count,
                     "inprogressCount": inprogress_count,
                     "totalTimeSeconds": total_time_seconds
