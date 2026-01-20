@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AITut Daily Report</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
+
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff; padding: 20px 0;">
+    <tr>
+        <td align="center">
+            <table border="0" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; max-width: 100%;">
+                
+                <!-- GLOBAL HEADER -->
+                <tr>
+                    <td style="background-color: #FF5F90; padding: 30px 20px; text-align: center; color: #ffffff; border-radius: 8px;">
+                        <h2 style="margin: 0; font-size: 24px; font-weight: 600;">AITut Daily Report</h2>
+                        {% if is_mentor %}
+                            <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Here is today's progress report for:  
+<strong>{{ circle_id }}</strong></p>
+                        {% else %}
+                            <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">{{ circle_id }} Summary</p>
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- GREETING SECTION -->
+                <tr>
+                    <td style="padding: 30px 10px; text-align: center;">
+                        <!-- Profile Picture Logic -->
+                        {% if profile_pic and profile_pic|length > 5 %}
+                            <img src="{{ profile_pic }}" alt="{{ recipient_first_name }}" width="60" height="60" style="display: inline-block; border-radius: 50%; vertical-align: middle; margin-right: 15px; object-fit: cover; border: 2px solid #eee;">
+                        {% else %}
+                            <div style="display: inline-block; width: 60px; height: 60px; background-color: #d1d1d1; border-radius: 50%; vertical-align: middle; margin-right: 15px; line-height: 60px; text-align: center; color: #fff; font-weight: bold; font-size: 24px;">
+                                {{ recipient_first_name[0] }}
+                            </div>
+                        {% endif %}
+                        
+                        <div style="display: inline-block; text-align: left; vertical-align: middle;">
+                            <div style="font-size: 16px; color: #000; font-weight: 700;">
+                                Hi {% if is_mentor %}mentor{% endif %} {{ recipient_first_name }}!
+                            </div>
+                            <div style="font-size: 14px; color: #333;">
+                                {% if is_mentor %}
+                                    Here is the summary for today.
+                                {% else %}
+                                    Today, you spent a total of:  
+
+                                    <span style="color: #28a745; font-weight: 700; font-size: 18px;">{{ personal_stats.time_spent }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- ========================================== -->
+                <!-- STUDENT VIEW SPECIFIC CONTENT              -->
+                <!-- ========================================== -->
+                {% if not is_mentor %}
+                
+                <!-- Personal Achievements Card -->
+                <tr>
+                    <td style="padding: 0 10px 20px 10px;">
+                        <div style="background-color: #FFEBEE; border-radius: 8px; overflow: hidden;">
+                            <div style="padding: 12px 20px; color: #FF5F90; font-weight: 700; font-size: 13px; text-transform: uppercase; border-bottom: 1px solid #FFCDD2;">
+                                🎗️ Today's Achievements
+                            </div>
+                            <div style="padding: 20px;">
+                                {% if personal_stats.achievements %}
+                                    <div style="font-size: 12px; color: #FF5F90; margin-bottom: 10px; font-weight: 500;">On your active courses:</div>
+                                    <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                        {% for item in personal_stats.achievements %}
+                                        <tr>
+                                            <td width="20" valign="top" style="padding-bottom: 8px; color: #28a745;">✅</td>
+                                            <td style="padding-bottom: 8px;">
+                                                <div style="font-size: 13px; color: #333;">{{ item.task }}</div>
+                                            </td>
+                                            <td align="right" valign="top" style="font-size: 12px; color: #888;">{{ item.time }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </table>
+                                {% else %}
+                                    <div style="font-size: 13px; color: #888; font-style: italic;">No materials completed yet today.</div>
+                                {% endif %}
+                                
+                                <div style="border-top: 1px solid #FFCDD2; margin-top: 15px; padding-top: 10px;">
+                                    <table width="100%">
+                                        <tr>
+                                            <td style="font-size: 12px; color: #FF5F90; font-weight: 500;">Total materials completed:</td>
+                                            <td align="right" style="font-size: 12px; font-weight: bold; color: #FF5F90;">{{ personal_stats.materials_count }}</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="font-size: 12px; color: #FF5F90; font-weight: 500;">Total hours spent:</td>
+                                            <td align="right" style="font-size: 12px; font-weight: bold; color: #FF5F90;">{{ personal_stats.time_spent }}</td>
+                                        </tr>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- Purple/Green Stats Cards -->
+                <tr>
+                    <td style="padding: 0 10px 30px 10px;">
+                        <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <td width="48%" valign="top">
+                                    <div style="background-color: #FFCDD2; border-radius: 8px; padding: 20px; text-align: center; height: 100px;">
+                                        <div style="font-size: 11px; color: #FF5F90; font-weight: 700; text-transform: uppercase; margin-bottom: 15px;">
+                                            MATERIALS COMPLETED
+                                        </div>
+                                        <span style="font-size: 32px; font-weight: 700; color: #FF5F90;">{{ personal_stats.materials_count }}</span>
+                                        <span style="font-size: 12px; color: #FF5F90;">items</span>
+                                    </div>
+                                </td>
+                                <td width="4%"></td>
+                                <td width="48%" valign="top">
+                                    <div style="background-color: #FFCDD2; border-radius: 8px; padding: 20px; text-align: center; height: 100px;">
+                                        <div style="font-size: 11px; color: #FF5F90; font-weight: 700; text-transform: uppercase; margin-bottom: 15px;">
+                                            TOTAL TIME SPENT
+                                        </div>
+                                        <span style="font-size: 32px; font-weight: 700; color: #FF5F90;">{{ personal_stats.time_spent }}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- Separator for Circle Progress -->
+                <tr>
+                    <td align="center" style="padding-bottom: 20px;">
+                        <div style="font-size: 14px; font-weight: 700; color: #000;">See your circle's progress</div>
+                        <div style="font-size: 16px; font-weight: 800; color: #000;">{{ circle_id }}</div>
+                        <div style="border-bottom: 1px dotted #ccc; width: 100%; margin-top: 10px;"></div>
+                    </td>
+                </tr>
+                {% endif %}
+
+                <!-- ========================================== -->
+                <!-- SHARED / MENTOR VIEW CONTENT               -->
+                <!-- ========================================== -->
+                
+                <!-- Leaderboard & Course Updates -->
+                <tr>
+                    <td style="padding: 0 10px 20px 10px;">
+                        <div style="background-color: #F9F9F9; border-radius: 8px; padding: 20px;">
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <!-- LEFT: Top 5 -->
+                                    <td width="48%" valign="top" style="border-right: 1px dotted #ccc; padding-right: 10px;">
+                                        <div style="color: #FBC02D; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
+                                            🥇 Today's top 5
+                                        </div>
+                                        {% if leaderboard %}
+                                            {% for student in leaderboard %}
+                                            <div style="font-size: 13px; color: #E57373; margin-bottom: 8px; font-weight: 500;">
+                                                <span style="color: #FBC02D; font-weight: bold;">{{ loop.index }}</span> &nbsp; {{ student.name }}
+                                            </div>
+                                            {% endfor %}
+                                        {% else %}
+                                            <div style="font-size: 12px; color: #999;">No activity recorded today.</div>
+                                        {% endif %}
+                                    </td>
+                                    
+                                    <!-- RIGHT: Course Updates -->
+                                    <td width="48%" valign="top" style="padding-left: 15px;">
+                                        <div style="color: #E57373; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
+                                            ⏳ Chapters completed
+                                        </div>
+                                        {% if course_updates %}
+                                            {% for update in course_updates %}
+                                            <div style="margin-bottom: 8px;">
+                                                <div style="font-size: 11px; color: #FF5F90; font-weight: 500;">{{ update.course }}</div>
+                                                <table width="100%">
+                                                    <tr>
+                                                        <td style="font-size: 11px; color: #E57373;">{{ update.task }}</td>
+                                                        <td align="right" style="font-size: 11px; color: #FF5F90; font-weight: bold;">100%</td>
+                                                    </tr>
+                                                </table>
+                                            </div>
+                                            {% endfor %}
+                                        {% else %}
+                                            <div style="font-size: 12px; color: #999;">No chapters completed today.</div>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- MENTOR SPECIFIC STATS ROW -->
+                {% if is_mentor %}
+                <tr>
+                    <td style="padding: 0 10px 20px 10px;">
+                        <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <td width="19%" style="background-color: #FFEBEE; border-radius: 6px; padding: 10px; text-align: center;">
+                                    <div style="font-size: 9px; color: #FF5F90; font-weight: 700;">TOTAL  
+STUDENTS</div>
+                                    <div style="font-size: 18px; color: #FF5F90; font-weight: 700; margin-top: 5px;">{{ circle_stats.total_students }}</div>
+                                </td>
+                                <td width="1%"></td>
+                                <td width="19%" style="background-color: #FFEBEE; border-radius: 6px; padding: 10px; text-align: center;">
+                                    <div style="font-size: 9px; color: #FF5F90; font-weight: 700;">ACTIVE  
+STUDENTS</div>
+                                    <div style="font-size: 18px; color: #FF5F90; font-weight: 700; margin-top: 5px;">{{ circle_stats.active_students }}</div>
+                                </td>
+                                <td width="1%"></td>
+                                <td width="19%" style="background-color: #FFEBEE; border-radius: 6px; padding: 10px; text-align: center;">
+                                    <div style="font-size: 9px; color: #FF5F90; font-weight: 700;">MATERIALS  
+DONE</div>
+                                    <div style="font-size: 18px; color: #FF5F90; font-weight: 700; margin-top: 5px;">{{ circle_stats.materials_completed }}</div>
+                                </td>
+                                <td width="1%"></td>
+                                <td width="19%" style="background-color: #FFEBEE; border-radius: 6px; padding: 10px; text-align: center;">
+                                    <div style="font-size: 9px; color: #FF5F90; font-weight: 700;">TOTAL  
+TIME</div>
+                                    <div style="font-size: 18px; color: #FF5F90; font-weight: 700; margin-top: 5px;">{{ circle_stats.total_hours }}h</div>
+                                </td>
+                                <td width="1%"></td>
+                                <td width="19%" style="background-color: #FFEBEE; border-radius: 6px; padding: 10px; text-align: center;">
+                                    <div style="font-size: 9px; color: #FF5F90; font-weight: 700;">COMPLETION  
+RATE</div>
+                                    <div style="font-size: 18px; color: #FF5F90; font-weight: 700; margin-top: 5px;">{{ circle_stats.completion_rate }}%</div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+                {% endif %}
+
+                <!-- GLOBAL FOOTER -->
+                <tr>
+                    <td style="background-color: #f8f9fa; border-top: 1px solid #eeeeee; padding: 20px; text-align: center;">
+                        <div style="margin-bottom: 15px; font-size: 13px; color: #555;">
+                            <strong>Today's Stats:</strong> &nbsp;
+                            <span style="display: inline-block; padding: 0 5px;">⏱ {{ circle_stats.total_hours }}h Total</span>
+                            <span style="color: #ccc;">|</span>
+                            <span style="display: inline-block; padding: 0 5px;">✅ {{ circle_stats.materials_completed }} Completed</span>
+                            <span style="color: #ccc;">|</span>
+                            <span style="display: inline-block; padding: 0 5px;">👥 {{ circle_stats.active_students }} Active</span>
+                        </div>
+
+                        <div style="font-size: 12px; color: #888; margin-bottom: 15px;">
+                            Keep up the great work!   
+                            <br>
+                            The AITut Team
+                        </div>
+
+                        <div style="font-size: 11px; color: #aaa; border-top: 1px solid #e5e7eb; padding-top: 10px; width: 80%; margin: 0 auto;">
+                            Automated report • Generated at {{ generated_at }}
+                        </div>
+                    </td>
+                </tr>
+
+            </table>
+        </td>
+    </tr>
+</table>
+</body>
+</html>
