@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from shared.email_service import send_email_to_list
-from shared.github_service import get_material_title
+from shared.github_service import get_material_title, get_chapter_title
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -178,11 +178,9 @@ def prepare_shared_context(report: dict, members_map: dict) -> dict:
         chapter_id = item.get('chapterId')
         material_id = item.get('materialId')
         
-        # Fetch real material title from GitHub service.
+        # Fetch real chapter & material title from GitHub service
+        chapter_name = get_chapter_title(chapter_id) or _format_id(chapter_id)
         material_name = get_material_title(chapter_id, material_id) or item.get('updateText')
-
-        # Format Chapter ID (Service only gets material title)
-        chapter_name = _format_id(chapter_id)
 
         course_updates.append({
             'header': chapter_name,
@@ -215,10 +213,15 @@ def get_personal_stats(report: dict, user_id: str) -> dict:
     completed_count = sum(1 for d in user_entries if d.get('isCompleted') is True)
     
     achievements = []
+    active_chapters = set() # Set to hold unique chapter IDs found in today's work
+
     for d in user_entries:
         if d.get('isCompleted'):
             chapter_id = d.get('chapterId')
             material_id = d.get('materialId')
+
+            if chapter_id:
+                active_chapters.add(chapter_id)
 
             task_name = get_material_title(chapter_id, material_id) or d.get('updateText')
             achievements.append({
@@ -226,10 +229,23 @@ def get_personal_stats(report: dict, user_id: str) -> dict:
                 'time': _format_time(d.get('timeSpentSeconds', 0))
             })
 
+    chapter_header = "your active courses"
+    
+    if active_chapters:
+        # Get the first chapter found (or you could sort/prioritize)
+        primary_chapter = list(active_chapters)[0]
+        real_title = get_chapter_title(primary_chapter)
+
+        if real_title:
+            chapter_header = f"chapter: {real_title}"
+        else:
+            chapter_header = f"chapter {_format_id(primary_chapter)}"
+
     return {
         "time_spent": _format_time(total_seconds),
         "materials_count": completed_count,
-        "achievements": achievements
+        "achievements": achievements,
+        "chapter_context": chapter_header
     }
 
 def _format_time(seconds):

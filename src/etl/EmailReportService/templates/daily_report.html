@@ -20,7 +20,7 @@
                             <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Here is today's progress report for:  
 <strong>{{ circle_id }}</strong></p>
                         {% else %}
-                            <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">{{ circle_id }} Summary</p>
+                            <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.9;">Below is today’s progress update</p>
                         {% endif %}
                     </td>
                 </tr>
@@ -39,11 +39,11 @@
                         
                         <div style="display: inline-block; text-align: left; vertical-align: middle;">
                             <div style="font-size: 16px; color: #000; font-weight: 700;">
-                                Hi {% if is_mentor %}mentor{% endif %} {{ recipient_first_name }}!
+                                Hi {% if is_mentor %}Mentor{% endif %} {{ recipient_first_name }}!
                             </div>
                             <div style="font-size: 14px; color: #333;">
                                 {% if is_mentor %}
-                                    Here is the summary for today.
+                                    View your circle's summary below:
                                 {% else %}
                                     Today, you spent a total of:  
 
@@ -68,15 +68,15 @@
                             </div>
                             <div style="padding: 20px;">
                                 {% if personal_stats.achievements %}
-                                    <div style="font-size: 12px; color: #FF5F90; margin-bottom: 10px; font-weight: 500;">On your active courses:</div>
+                                    <div style="font-size: 12px; color: #FF5F90; margin-bottom: 10px; font-weight: 500;">On {{ personal_stats.chapter_context }}</div>
                                     <table width="100%" border="0" cellspacing="0" cellpadding="0">
                                         {% for item in personal_stats.achievements %}
                                         <tr>
                                             <td width="20" valign="top" style="padding-bottom: 8px; color: #28a745;">✅</td>
                                             <td style="padding-bottom: 8px;">
-                                                <div style="font-size: 13px; color: #333;">{{ item.task }}</div>
+                                                <div style="font-size: 13px; color: #E57373;">{{ item.task }}</div>
                                             </td>
-                                            <td align="right" valign="top" style="font-size: 12px; color: #888;">{{ item.time }}</td>
+                                            <td align="right" valign="top" style="font-size: 12px; color: #E57373;">{{ item.time }}</td>
                                         </tr>
                                         {% endfor %}
                                     </table>
@@ -151,7 +151,7 @@
                                 <tr>
                                     <!-- LEFT: Top 5 -->
                                     <td width="48%" valign="top" style="border-right: 1px dotted #ccc; padding-right: 10px;">
-                                        <div style="color: #FBC02D; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
+                                        <div style="color: #FF5F90; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
                                             🥇 Today's top 5
                                         </div>
                                         {% if leaderboard %}
@@ -167,13 +167,13 @@
                                     
                                     <!-- RIGHT: Course Updates -->
                                     <td width="48%" valign="top" style="padding-left: 15px;">
-                                        <div style="color: #E57373; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
+                                        <div style="color: #FF5F90; font-weight: 700; font-size: 13px; margin-bottom: 15px;">
                                             ⏳ Chapters completed
                                         </div>
                                         {% if course_updates %}
                                             {% for update in course_updates %}
                                             <div style="margin-bottom: 8px;">
-                                                <div style="font-size: 11px; color: #FF5F90; font-weight: 500;">{{ update.course }}</div>
+                                                <div style="font-size: 11px; color: #FF5F90; font-weight: 500;">{{ update.header }}</div>
                                                 <table width="100%">
                                                     <tr>
                                                         <td style="font-size: 11px; color: #E57373;">{{ update.task }}</td>
