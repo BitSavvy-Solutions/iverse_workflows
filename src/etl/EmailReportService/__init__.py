@@ -105,8 +105,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                             subject, 
                             html_content, 
                             "Please enable HTML.",
+                            cc_email="munk@iverse.space" if is_mentor else None
                             # cc_email="desireecapacia.dev@gmail.com" if is_mentor else None
-                            # cc_email="munk@iverse.space" if is_mentor else None
                         )
                         emails_sent += sent
                         errors += err
