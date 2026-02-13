@@ -44,7 +44,8 @@ def send_daily_report_to_slack(
     user_name: str,
     user_email: str,
     report_data: dict,
-    report_date: str
+    report_date: str,
+    slack_channel_id: str = None
 ) -> bool:
     """
     Send daily progress report to Slack channel
@@ -54,13 +55,20 @@ def send_daily_report_to_slack(
         user_email: Student's email (to find Slack ID)
         report_data: Dictionary with progress data
         report_date: Date string (YYYY-MM-DD)
+        slack_channel_id: Circle-specific Slack channel ID (optional, falls back to env)
         
     Returns:
         True if successful, False otherwise
     """
     try:
         slack_client = WebClient(token=os.environ['SLACK_BOT_TOKEN'])
-        channel_id = os.environ['SLACK_DAILY_REPORTS_CHANNEL_ID']
+        channel_id = slack_channel_id or os.environ.get('SLACK_DAILY_REPORTS_CHANNEL_ID')
+        
+        if not channel_id:
+            logging.error('No Slack channel ID provided')
+            return False
+        
+        logging.info(f'Sending report to Slack channel: {channel_id}')
         
         # Try to find user's Slack ID
         slack_user_id = get_slack_user_id_by_email(user_email)

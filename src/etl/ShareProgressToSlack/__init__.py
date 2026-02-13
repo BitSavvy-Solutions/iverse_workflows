@@ -50,6 +50,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         
         users_collection = user_db['users']
+        circle_members_collection = user_db['circleMembers']
+        circles_collection = user_db['circles']
         progress_collection = course_db['progress']
         
         # TEST: Get ALL progress for this user (no date filter)
@@ -85,6 +87,56 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 status_code=400,
                 mimetype="application/json"
             )
+        
+        # ========================================
+        # GET USER'S CIRCLE AND SLACK CHANNEL
+        # ========================================
+        circle_membership = circle_members_collection.find_one({
+            'userId': user_id
+        })
+        
+        if not circle_membership:
+            client.close()
+            return func.HttpResponse(
+                json.dumps({
+                    "success": False,
+                    "error": "You are not part of any learning circle. Please join a circle to share updates."
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        user_circle_id = circle_membership.get('circleId')
+        logging.info(f'User belongs to circle: {user_circle_id}')
+        
+        # Get circle's Slack channel
+        circle = circles_collection.find_one({'circleId': user_circle_id})
+        
+        if not circle:
+            client.close()
+            return func.HttpResponse(
+                json.dumps({
+                    "success": False,
+                    "error": "Circle configuration not found"
+                }),
+                status_code=404,
+                mimetype="application/json"
+            )
+        
+        circle_slack_channel = circle.get('slackChannel')
+        
+        if not circle_slack_channel:
+            client.close()
+            return func.HttpResponse(
+                json.dumps({
+                    "success": False,
+                    "error": "Your circle does not have a Slack channel configured. Please contact your mentor."
+                }),
+                status_code=400,
+                mimetype="application/json"
+            )
+        
+        logging.info(f'Sharing to circle Slack channel: {circle_slack_channel}')
         
         # Get all progress entries from last 24 hours
         end_time = datetime.now(timezone.utc)
@@ -139,7 +191,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 user_name=user_name,
                 user_email=user_email,
                 report_data=report_data,
-                report_date=datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                report_date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+                slack_channel_id=circle_slack_channel
             )
             
             client.close()
@@ -259,7 +312,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             user_name=user_name,
             user_email=user_email,
             report_data=report_data,
-            report_date=datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            report_date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            slack_channel_id=circle_slack_channel
         )
 
         client.close()

@@ -22,7 +22,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     {
         "success": true,
         "data": {
+            "circleId": "foundingCircle1",
+            "hasCircle": true,
             "modulesCompleted": 3,
+            "modulesInProgress": 1,
             "timeSpent": 9000,
             "totalActivities": 4,
             "activities": [...]
@@ -49,8 +52,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         
         # Connect to database
         client = MongoClient(os.environ['COSMOS_CONNECTION_STRING'])
+        user_db = client['userdb']
         course_db = client['coursedb']
+        
+        circle_members_collection = user_db['circleMembers']
         progress_collection = course_db['progress']
+        
+        # ========================================
+        # GET USER'S CIRCLE
+        # ========================================
+        circle_membership = circle_members_collection.find_one({
+            'userId': user_id
+        })
+        
+        user_circle_id = circle_membership.get('circleId') if circle_membership else None
+        has_circle = bool(user_circle_id)
+        
+        logging.info(f'User circle: {user_circle_id or "none"} (hasCircle: {has_circle})')
         
         # Get today's range (last 24 hours)
         end_time = datetime.now(timezone.utc)
@@ -142,7 +160,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             material_id = material['materialId']
             
             # Get material title from GitHub
-            material_title = get_material_title(chapter_id, material_id)
+            material_title = get_material_title(chapter_id, material_id) 
             
             # Create readable title
             if material_title:
@@ -175,10 +193,12 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             json.dumps({
                 "success": True,
                 "data": {
+                    "circleId": user_circle_id, 
+                    "hasCircle": has_circle,
                     "modulesCompleted": modules_completed,
                     "modulesInProgress": modules_in_progress,
                     "timeSpent": total_time_spent,
-                    "totalActivities": len(material_groups),  # ← Теперь это количество уникальных материалов
+                    "totalActivities": len(material_groups),  
                     "activities": activities
                 }
             }),
