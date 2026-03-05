@@ -51,5 +51,6 @@ __blobstorage__
 __queuestorage__
 __azurite_db*__.json
 
-SendWelcomeEmail/*.json
-*.json
+SendWelcomeEmail
+local.settings.json
+appsettings.json
