@@ -13,7 +13,7 @@ Import anywhere in the Azure Functions project:
 import os
 import math
 import logging
-import httpx
+import requests
 from pymongo import MongoClient
 from typing import Optional
 
@@ -41,7 +41,7 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 
 def _get_embedding(text: str) -> list[float]:
     """Calls OpenRouter to embed a piece of text."""
-    response = httpx.post(
+    response = requests.post(
         "https://openrouter.ai/api/v1/embeddings",
         headers={
             "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",

@@ -21,7 +21,7 @@ import json
 import time
 import os
 import azure.functions as func
-import httpx
+import requests
 from pymongo import MongoClient
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ def fetch_json_from_github(path: str) -> dict | None:
     """Fetches a JSON file from the curriculum GitHub repo."""
     url = f"{GITHUB_BASE}/{path}"
     try:
-        response = httpx.get(url, timeout=15)
+        response = requests.get(url, timeout=15)
         if response.status_code == 200:
             return response.json()
         logging.warning(f"GitHub 404: {url}")
@@ -70,7 +70,7 @@ def fetch_markdown_from_github(path: str) -> str:
     """Fetches a Markdown file from the curriculum GitHub repo."""
     url = f"{GITHUB_BASE}/{path}"
     try:
-        response = httpx.get(url, timeout=15)
+        response = requests.get(url, timeout=15)
         if response.status_code == 200:
             return response.text
         return ""
@@ -84,7 +84,7 @@ def fetch_markdown_from_github(path: str) -> str:
 def get_embedding(text: str) -> list[float]:
     """Calls OpenRouter to generate a text embedding."""
     api_key = os.environ["OPENROUTER_API_KEY"]
-    response = httpx.post(
+    response = requests.post(
         "https://openrouter.ai/api/v1/embeddings",
         headers={
             "Authorization": f"Bearer {api_key}",
