@@ -320,6 +320,25 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         if success:
             logging.info(f'✅ Daily progress shared to Slack for user: {user_name}')
+            
+            # Update database: mark as shared (MANUAL)
+            progress_collection.update_many(
+                {
+                    'userId': user_id,
+                    'createdAt': {
+                        '$gte': start_time,
+                        '$lte': end_time
+                    }
+                },
+                {
+                    '$set': {
+                        'sharedToSlack': True,
+                        'sharedAt': datetime.now(timezone.utc),
+                        'sharedType': 'manual'
+                    }
+                }
+            )
+            
             return func.HttpResponse(
                 json.dumps({
                     "success": True,
