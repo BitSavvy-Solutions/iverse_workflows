@@ -161,7 +161,7 @@ def get_chapter_for_standup(
         text=standup_text,
         course_id=course_id,
         top_k=1,
-        min_score=0.60,
+        min_score=0.45,
     )
 
     if not matches:
@@ -170,7 +170,7 @@ def get_chapter_for_standup(
     best  = matches[0]
     score = best["score"]
 
-    confidence = "high" if score >= 0.82 else ("medium" if score >= 0.70 else "low")
+    confidence = "high" if score >= 0.55 else ("medium" if score >= 0.48 else "low")
 
     return {
         "chapterId":     best["chapterId"],
