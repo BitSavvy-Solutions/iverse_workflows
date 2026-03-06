@@ -84,10 +84,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
         if curriculum_match:
             logging.info(
-                f"Match: {curriculum_match['chapterTitle']} / "
-                f"{curriculum_match['materialTitle']} "
-                f"(score={curriculum_match['score']}, "
-                f"confidence={curriculum_match['confidence']})"
+                f"Match: {curriculum_match['chapterTitle']} "
+                f"via {curriculum_match.get('matchMethod','?')} "
+                f"(confidence={curriculum_match.get('confidence','?')}, "
+                f"score={curriculum_match.get('score','n/a')})"
             )
         else:
             # Happens for messages about events, meetings etc — that's fine
