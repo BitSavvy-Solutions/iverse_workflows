@@ -1,16 +1,31 @@
 """
 src/etl/shared/curriculum_search.py
 ────────────────────────────────────
-Finds the most relevant curriculum chapter/material for any free text
-(standup message, question, topic) using cosine similarity on stored embeddings.
+Hybrid approach to match a Slack standup message to a curriculum chapter:
 
-No native vector index needed — works with regular Cosmos DB (RU-based Serverless).
+  Step 1 — Keyword matching (instant, free)
+            Catches ~80% of messages where students mention
+            specific technologies (SQL, React, GitHub, etc.)
 
-Import anywhere in the Azure Functions project:
+  Step 2 — Vector search (OpenRouter embeddings + cosine similarity)
+            Only runs if keyword matching found nothing.
+            Runs only on the "what I did" section of the message,
+            not on "tomorrow" / "blockers" noise.
+
+  Step 3 — Return null
+            If neither step found a confident match
+            (e.g. "Attended mentor session", "Nothing blocking me")
+
+Usage:
     from shared.curriculum_search import get_chapter_for_standup
+
+    result = get_chapter_for_standup("Learned SQL joins and aggregate functions")
+    # → {"chapterId": "ch08", "chapterTitle": "Databases",
+    #    "confidence": "high", "matchMethod": "keyword"}
 """
 
 import os
+import re
 import math
 import logging
 import requests
@@ -22,13 +37,186 @@ DB_NAME         = "coursedb"
 COLLECTION_NAME = "curriculumEmbeddings"
 
 
-# ── Cosine similarity (pure Python, no extra dependencies) ────────────────────
+# ── Step 1: Keyword map ───────────────────────────────────────────────────────
+#
+# Each entry: (chapter_id, chapter_title, [keywords...])
+# Keywords are matched case-insensitively against the full message text.
+# Order matters — more specific entries should come first.
+# If a message matches multiple chapters, the first match wins.
 
-def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+KEYWORD_MAP = [
+    # ch10 — Node.js & Express (check before generic "js" keywords)
+    (
+        "ch10",
+        "Node.js and Express",
+        [
+            "node.js", "nodejs", "node js", "express", "express.js",
+            "backend", "back-end", "back end", "rest api", "restapi",
+            "api endpoint", "server side", "server-side", "middleware",
+            "http server", "postman", "npm install",
+        ],
+    ),
+    # ch09 — React (check before generic "js" keywords)
+    (
+        "ch09",
+        "React Fundamentals",
+        [
+            "react", "jsx", "usestate", "useeffect",
+            "hooks", "react dom", "reactdom", "vite",
+            "react router", "redux",
+        ],
+    ),
+    # ch08 — Databases
+    (
+        "ch08",
+        "Databases",
+        [
+            "sql", "mysql", "postgresql", "sqlite", "database",
+            "mongodb", "mongo db", "mongoose", "nosql", "no-sql",
+            "select ", "insert into", "inner join", "outer join",
+            "sql server", "ssms", "aggregate function",
+            "collection", "document store",
+        ],
+    ),
+    # ch07 — TypeScript
+    (
+        "ch07",
+        "TypeScript",
+        [
+            "typescript", ".ts", "type annotation",
+            "interface", "generics", "enum", "tsc",
+        ],
+    ),
+    # ch06 — Building Dynamic Websites (Bootstrap)
+    (
+        "ch06",
+        "Building Dynamic Websites",
+        [
+            "bootstrap", "navbar", "responsive design", "grid system",
+            "carousel", "modal", "tailwind",
+        ],
+    ),
+    # ch05 — Portfolio Assignment
+    (
+        "ch05",
+        "Portfolio Assignment",
+        [
+            "portfolio", "personal website",
+            "portfolio project", "dark theme", "light theme",
+            "about page", "contact page", "skills page",
+        ],
+    ),
+    # ch04 — Version Control & Hosting
+    (
+        "ch04",
+        "Version Control and Hosting",
+        [
+            "github", "gitlab", "version control",
+            "pull request", "merge conflict",
+            "netlify", "github pages",
+        ],
+    ),
+    # ch03 — HTML & CSS
+    (
+        "ch03",
+        "HTML and CSS",
+        [
+            "html", "css", "stylesheet", "boilerplate",
+            "box model", "media query",
+            "selector", "<div>", "<span>",
+        ],
+    ),
+    # ch02 — JavaScript
+    (
+        "ch02",
+        "Interactivity and User Experience",
+        [
+            "javascript", "es6", "es2015", "dom manipulation",
+            "event listener", "callback", "promise",
+            "async await", "freecodecamp",
+            "algorithm", "data structure", "regex", "regular expression",
+            "debugging",
+        ],
+    ),
+    # ch01 — How the Internet Works
+    (
+        "ch01",
+        "How the Internet Works",
+        [
+            "http", "https", "dns", "tcp/ip",
+            "web server", "client server", "protocol",
+            "how the internet",
+        ],
+    ),
+]
+
+
+# ── Step 1 implementation ─────────────────────────────────────────────────────
+
+def _keyword_match(text: str) -> Optional[dict]:
     """
-    Returns cosine similarity between two vectors (float, -1.0 to 1.0).
-    For text embeddings: 0.82+ = strong match, 0.70+ = good, below 0.65 = weak.
+    Scans message text for known technology keywords.
+    Returns chapter info on first match, or None.
     """
+    text_lower = text.lower()
+
+    for chapter_id, chapter_title, keywords in KEYWORD_MAP:
+        for kw in keywords:
+            if kw.lower() in text_lower:
+                logging.info(
+                    f"Keyword match: '{kw}' → {chapter_id} ({chapter_title})"
+                )
+                return {
+                    "chapterId":      chapter_id,
+                    "chapterTitle":   chapter_title,
+                    "matchedKeyword": kw,
+                }
+
+    return None
+
+
+# ── Step 2a: Extract "what I did" section ─────────────────────────────────────
+
+# Patterns marking start of "tomorrow" / "blockers" sections — stop reading here
+_NOISE_PATTERNS = re.compile(
+    r"(what\s+(will|i'?ll?|i\s+will|i\s+plan)\s+i\s+do"
+    r"|what'?s?\s+next"
+    r"|tomorrow'?s?\s+plan"
+    r"|anything\s+block"
+    r"|is\s+there\s+.{0,20}block"
+    r"|what\s+is\s+(stopping|holding|blocking)"
+    r"|blockers?"
+    r")",
+    re.IGNORECASE,
+)
+
+def _extract_did_section(text: str) -> str:
+    """
+    Returns only the 'what I did' portion of a standup message,
+    discarding 'tomorrow' and 'blockers' sections to reduce noise.
+
+    Example:
+        Input:  "Learned React hooks today.\\nTomorrow: Redux.\\nBlockers: none."
+        Output: "Learned React hooks today."
+    """
+    lines = text.splitlines()
+    cleaned = []
+
+    for line in lines:
+        if _NOISE_PATTERNS.search(line):
+            break  # Stop at first "tomorrow" / "blockers" heading
+        cleaned.append(line)
+
+    result = "\n".join(cleaned).strip()
+
+    # If nothing survived (e.g. very short message), fall back to full text
+    return result if len(result) > 20 else text
+
+
+# ── Step 2b: Cosine similarity ────────────────────────────────────────────────
+
+def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    """Cosine similarity between two float vectors (-1.0 to 1.0)."""
     dot   = sum(a * b for a, b in zip(vec_a, vec_b))
     mag_a = math.sqrt(sum(a * a for a in vec_a))
     mag_b = math.sqrt(sum(b * b for b in vec_b))
@@ -37,10 +225,8 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return dot / (mag_a * mag_b)
 
 
-# ── Embedding helper ──────────────────────────────────────────────────────────
-
 def _get_embedding(text: str) -> list[float]:
-    """Calls OpenRouter to embed a piece of text."""
+    """Calls OpenRouter to generate a text embedding for the given text."""
     response = requests.post(
         "https://openrouter.ai/api/v1/embeddings",
         headers={
@@ -55,128 +241,132 @@ def _get_embedding(text: str) -> list[float]:
     return response.json()["data"][0]["embedding"]
 
 
-# ── Main search ───────────────────────────────────────────────────────────────
-
-def find_curriculum_matches(
-    text: str,
-    course_id: str = "fullstack-2025",
-    top_k: int = 3,
-    min_score: float = 0.65,
-) -> list[dict]:
+def _vector_match(text: str, course_id: str) -> Optional[dict]:
     """
-    Returns top-k curriculum materials most semantically similar to `text`.
-
-    Args:
-        text:      Any free text — standup message, student question, etc.
-        course_id: Curriculum to search within (supports multiple curricula).
-        top_k:     Max number of results.
-        min_score: Minimum cosine similarity (0.0–1.0). Below this = ignored.
-
-    Returns list of dicts sorted by score descending:
-        [{"score": 0.89, "chapterId": "ch02", "chapterTitle": "...",
-          "materialId": "mat02-02", "materialTitle": "...", "materialType": "course"}, ...]
+    Generates an embedding for `text` and finds the closest curriculum material.
+    Returns chapter info if best score >= 0.48, else None.
     """
     query_embedding = _get_embedding(text)
 
     client     = MongoClient(os.environ["COSMOS_CONNECTION_STRING"])
     collection = client[DB_NAME][COLLECTION_NAME]
 
-    # Fetch all embeddings for this course
-    # For 30–50 materials this is instant; cache in memory if needed at scale
     materials = list(collection.find(
         {"courseId": course_id},
-        {"chapterId": 1, "chapterTitle": 1, "chapterOrder": 1,
-         "materialId": 1, "materialTitle": 1, "materialType": 1,
-         "embedding": 1}
+        {"chapterId": 1, "chapterTitle": 1, "materialId": 1,
+         "materialTitle": 1, "materialType": 1, "embedding": 1},
     ))
     client.close()
 
     if not materials:
         logging.warning(f"No embeddings found for courseId='{course_id}'")
-        return []
+        return None
 
-    # Score every material
+    # Score every material against the query
     scored = []
     for mat in materials:
         if not mat.get("embedding"):
             continue
-        score = cosine_similarity(query_embedding, mat["embedding"])
-        scored.append({
-            "score":        round(score, 4),
-            "chapterId":    mat["chapterId"],
-            "chapterTitle": mat["chapterTitle"],
-            "chapterOrder": mat.get("chapterOrder", 0),
-            "materialId":   mat["materialId"],
-            "materialTitle": mat["materialTitle"],
-            "materialType": mat.get("materialType", ""),
-        })
+        score = _cosine_similarity(query_embedding, mat["embedding"])
+        scored.append((score, mat))
 
-    # Sort, filter, cap
-    results = sorted(scored, key=lambda x: x["score"], reverse=True)
+    scored.sort(key=lambda x: x[0], reverse=True)
 
-    # Log top 3 scores to help debug threshold tuning
-    for i, r in enumerate(results[:3]):
+    # Log top 3 scores for debugging
+    for i, (score, mat) in enumerate(scored[:3]):
         logging.info(
-            f"  Top {i+1}: {r['chapterTitle']} / {r['materialTitle']} "
-            f"(score={r['score']})"
+            f"  Vector top {i+1}: {mat['chapterTitle']} / "
+            f"{mat['materialTitle']} (score={score:.4f})"
         )
 
-    results = [r for r in results if r["score"] >= min_score][:top_k]
+    best_score, best_mat = scored[0]
 
-    if results:
-        best = results[0]
-        logging.info(
-            f"Vector match: '{text[:60]}...' → "
-            f"{best['chapterTitle']} / {best['materialTitle']} "
-            f"(score={best['score']})"
-        )
+    # Threshold tuned for text-embedding-3-small conservative score range
+    if best_score < 0.48:
+        logging.info(f"Vector: no confident match (best={best_score:.4f})")
+        return None
 
-    return results
+    return {
+        "chapterId":     best_mat["chapterId"],
+        "chapterTitle":  best_mat["chapterTitle"],
+        "materialId":    best_mat["materialId"],
+        "materialTitle": best_mat["materialTitle"],
+        "score":         round(best_score, 4),
+    }
 
 
-# ── Convenience wrapper used by n8n / AIDA pipeline ──────────────────────────
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def get_chapter_for_standup(
     standup_text: str,
     course_id: str = "fullstack-2025",
 ) -> Optional[dict]:
     """
-    Simplified function: takes a standup message, returns the single best
-    chapter match with a human-readable confidence label.
+    Main entry point. Returns the best curriculum chapter match for a standup.
 
-    Used in SaveSlackStandup Azure Function and n8n workflow.
+    Strategy:
+        1. Keyword match on full text       → fast, free, ~80% coverage
+        2. Vector match on "did" section    → handles edge cases
+        3. null                             → non-study message
 
     Returns:
         {
-          "chapterId":    "ch02",
-          "chapterTitle": "Interactivity and User Experience",
-          "materialId":   "mat02-02",
-          "materialTitle": "JavaScript Algorithms and Data Structures",
-          "confidence":   "high" | "medium" | "low",
-          "score":        0.89
+            "chapterId":    "ch08",
+            "chapterTitle": "Databases",
+            "confidence":   "high" | "medium" | "low",
+            "matchMethod":  "keyword" | "vector",
+
+            # keyword match only:
+            "matchedKeyword": "mongodb",
+
+            # vector match only:
+            "materialId":    "mat08-02",
+            "materialTitle": "Introduction to MongoDB",
+            "score":         0.54,
         }
-        or None if no match above threshold.
+        or None if no match found.
     """
-    matches = find_curriculum_matches(
-        text=standup_text,
-        course_id=course_id,
-        top_k=1,
-        min_score=0.45,
+
+    # ── Step 1: Keyword matching ──────────────────────────────────────────────
+    kw_result = _keyword_match(standup_text)
+
+    if kw_result:
+        return {
+            "chapterId":      kw_result["chapterId"],
+            "chapterTitle":   kw_result["chapterTitle"],
+            "confidence":     "high",
+            "matchMethod":    "keyword",
+            "matchedKeyword": kw_result["matchedKeyword"],
+        }
+
+    # ── Step 2: Vector search on "what I did" section only ───────────────────
+    logging.info("No keyword match — falling back to vector search")
+
+    did_section = _extract_did_section(standup_text)
+    logging.info(
+        f"'Did' section extracted ({len(did_section)} chars): "
+        f"{did_section[:120]}..."
     )
 
-    if not matches:
+    try:
+        vec_result = _vector_match(did_section, course_id)
+    except Exception as e:
+        logging.error(f"Vector search failed: {e}")
         return None
 
-    best  = matches[0]
-    score = best["score"]
+    if vec_result:
+        score = vec_result["score"]
+        confidence = "high" if score >= 0.55 else ("medium" if score >= 0.50 else "low")
+        return {
+            "chapterId":     vec_result["chapterId"],
+            "chapterTitle":  vec_result["chapterTitle"],
+            "materialId":    vec_result["materialId"],
+            "materialTitle": vec_result["materialTitle"],
+            "confidence":    confidence,
+            "matchMethod":   "vector",
+            "score":         score,
+        }
 
-    confidence = "high" if score >= 0.55 else ("medium" if score >= 0.48 else "low")
-
-    return {
-        "chapterId":     best["chapterId"],
-        "chapterTitle":  best["chapterTitle"],
-        "materialId":    best["materialId"],
-        "materialTitle": best["materialTitle"],
-        "confidence":    confidence,
-        "score":         score,
-    }
+    # ── Step 3: No match ──────────────────────────────────────────────────────
+    logging.info("No curriculum match found (likely non-study message)")
+    return None
