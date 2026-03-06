@@ -113,6 +113,14 @@ def find_curriculum_matches(
 
     # Sort, filter, cap
     results = sorted(scored, key=lambda x: x["score"], reverse=True)
+
+    # Log top 3 scores to help debug threshold tuning
+    for i, r in enumerate(results[:3]):
+        logging.info(
+            f"  Top {i+1}: {r['chapterTitle']} / {r['materialTitle']} "
+            f"(score={r['score']})"
+        )
+
     results = [r for r in results if r["score"] >= min_score][:top_k]
 
     if results:
