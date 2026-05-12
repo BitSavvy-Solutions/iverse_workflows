@@ -122,13 +122,34 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     }
 
     collection.insert_one(doc)
+
+    # Look up official student name from cohort roster
+    cohort_entry  = client[DB_NAME]["cohortStudents"].find_one(
+        {"slackUserId": slack_user_id}
+    )
+    # None means student is not in our cohort — Google Sheets node will skip them
+    official_name = cohort_entry["name"] if cohort_entry else None
+
     client.close()
 
-    logging.info(f"Saved: {slack_user_name} ({slack_user_id})")
+    chapter    = curriculum_match.get("chapterTitle") if curriculum_match else None
+    chapter_id = curriculum_match.get("chapterId")    if curriculum_match else None
 
-    # Return minimal response — n8n doesn't need more than this
+    logging.info(f"Saved: {official_name} ({slack_user_id})")
+
+    # Return enriched response — n8n uses name + chapter for Google Sheets
     return func.HttpResponse(
-        json.dumps({"success": True, "duplicate": False}),
+        json.dumps({
+            "success":       True,
+            "duplicate":     False,
+            "studentName":   official_name,  # None if not in cohort
+            "inCohort":      official_name is not None,  # n8n uses this to filter
+            "slackUserId":   slack_user_id,
+            "chapter":       chapter,
+            "chapterId":     chapter_id,
+            "dateStr":       now.strftime("%Y-%m-%d"),
+            "messageSnippet": message_text[:150],
+        }),
         status_code=201,
         mimetype="application/json",
     )

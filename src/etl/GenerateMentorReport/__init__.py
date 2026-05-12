@@ -17,10 +17,44 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 
+import requests
 import azure.functions as func
 from pymongo import MongoClient
 
 from shared.email_service import send_email_to_list
+
+# ── Slack user name resolver ──────────────────────────────────────────────────
+
+_user_name_cache: dict[str, str] = {}
+
+def _resolve_user_name(slack_user_id: str) -> str:
+    """Resolves Slack user ID to real name. Caches results within one run."""
+    if slack_user_id in _user_name_cache:
+        return _user_name_cache[slack_user_id]
+
+    token = os.environ.get("SLACK_BOT_TOKEN")
+    if not token:
+        return slack_user_id
+
+    try:
+        resp = requests.get(
+            "https://slack.com/api/users.info",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"user": slack_user_id},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("ok"):
+            profile = data["user"].get("profile", {})
+            name = profile.get("real_name") or profile.get("display_name") or slack_user_id
+        else:
+            name = slack_user_id
+    except Exception as e:
+        logging.warning(f"Could not resolve user {slack_user_id}: {e}")
+        name = slack_user_id
+
+    _user_name_cache[slack_user_id] = name
+    return name
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -32,22 +66,12 @@ SILENT_THRESHOLD_DAYS = 5
 
 # Test recipients — team emails while we're in testing mode
 TEST_RECIPIENTS = [
-    "yuliiakuts@gmail.com", 
+    "yuliiakuts@gmail.com",
     "mayank.kr@pm.me"
 ]
 
-# Known student roster (Slack display names)
-KNOWN_STUDENTS = [
-    "Elizabeth Nlooto", "Ngaaruhe Hei", "Magdalena Djuulume",
-    "Martha Taukuheke", "Lisa Chikovore", "Nashinghulame Ndadi",
-    "Marlene Ntelamo", "Kristofina Petrus", "Lusia Kaushiningwa",
-    "Emma Muulyao", "Justy Amutenya", "Helena Petrus",
-    "Shamiso Vushe", "Daholva Naledi", "Nafuka Rosalia Kelly Penexupifo",
-    "Ndamononghenda T Antsink", "Pia Atshipara", "Grace Liezl Thomas",
-    "Mennas Fransiska", "Johanna Ndapandula Ambata", "Josephina Iyambo",
-    "Kelebogile Mukwada", "Natalia Kailokele Nakwatumba", "Liina Massipa",
-    "Grace Alao", "Laina Shivolol", "Yuliia Kuts"
-]
+# TODO: KNOWN_STUDENTS removed — roster now loaded from coursedb.cohortStudents
+# Migrate to userdb.users.slackUserId when all students register on platform.
 
 
 # ── Entry points ──────────────────────────────────────────────────────────────
@@ -92,26 +116,48 @@ def _build_report() -> dict:
     client     = MongoClient(os.environ["COSMOS_CONNECTION_STRING"])
     collection = client[DB_NAME][COLLECTION_NAME]
 
+    # ── Load cohort roster from DB ────────────────────────────────────────────
+    # Source: coursedb.cohortStudents (temporary — see load_cohort_students.py)
+    # TODO: Replace with userdb.users query when all students register on platform
+    cohort_col = client["coursedb"]["cohortStudents"]
+    cohort_students = list(cohort_col.find({"courseId": "fullstack-2025"}))
+
+    # Build lookup maps
+    # slackUserId → official name
+    id_to_name  = {s["slackUserId"]: s["name"] for s in cohort_students if s.get("slackUserId")}
+    # official name → slackUserId (for stuck check)
+    name_to_id  = {s["name"]: s.get("slackUserId") for s in cohort_students}
+    all_names   = [s["name"] for s in cohort_students]
+
+    logging.info(f"Loaded {len(cohort_students)} students from cohortStudents ({len(id_to_name)} with Slack ID)")
+
     # ── Who posted today ──────────────────────────────────────────────────────
     todays_updates = list(collection.find({"dateStr": date_str}))
     logging.info(f"Found {len(todays_updates)} updates for {date_str}")
 
+    # Key by official name (from cohortStudents) or Slack display name as fallback
     posted_today: dict[str, list] = {}
     for update in todays_updates:
-        name = update.get("slackUserName") or update.get("slackUserId", "Unknown")
+        slack_id = update.get("slackUserId", "")
+        # Try official name from cohort roster first
+        name = id_to_name.get(slack_id) or update.get("slackUserName") or _resolve_user_name(slack_id)
         posted_today.setdefault(name, []).append(update)
 
     # ── Who did NOT post today ────────────────────────────────────────────────
-    silent_today = sorted([s for s in KNOWN_STUDENTS if s not in posted_today])
+    silent_today = sorted([n for n in all_names if n not in posted_today])
 
     # ── Who is silent 5+ days ─────────────────────────────────────────────────
     cutoff_str = (now - timedelta(days=SILENT_THRESHOLD_DAYS)).strftime("%Y-%m-%d")
 
     stuck_students = []
-    for name in KNOWN_STUDENTS:
-        # Sort in Python to avoid Cosmos DB index requirement
-        all_updates = list(collection.find({"slackUserName": name}, {"savedAt": 1, "dateStr": 1}))
+    for name in all_names:
+        slack_id = name_to_id.get(name)
+
+        # Find last update by slackUserId if available, else by name
+        query = {"slackUserId": slack_id} if slack_id else {"slackUserName": name}
+        all_updates = list(collection.find(query, {"savedAt": 1, "dateStr": 1}))
         last = max(all_updates, key=lambda u: u.get("savedAt", ""), default=None) if all_updates else None
+
         if not last:
             stuck_students.append({"name": name, "lastSeen": "never", "daysSilent": "∞"})
         elif last.get("dateStr", "") < cutoff_str:
@@ -137,7 +183,7 @@ def _build_report() -> dict:
 
     return {
         "date":             date_str,
-        "totalKnown":       len(KNOWN_STUDENTS),
+        "totalKnown":       len(all_names),
         "postedCount":      len(posted_today),
         "silentCount":      len(silent_today),
         "stuckCount":       len(stuck_students),

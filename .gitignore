@@ -54,3 +54,6 @@ __azurite_db*__.json
 SendWelcomeEmail
 local.settings.json
 appsettings.json
+
+src/etl/scripts/
+src/etl/google_sheets_key.json
