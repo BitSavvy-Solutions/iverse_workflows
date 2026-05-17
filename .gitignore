@@ -57,3 +57,4 @@ appsettings.json
 
 src/etl/scripts/
 src/etl/google_sheets_key.json
+tmp

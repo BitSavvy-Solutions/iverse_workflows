@@ -67,7 +67,8 @@ SILENT_THRESHOLD_DAYS = 5
 # Test recipients — team emails while we're in testing mode
 TEST_RECIPIENTS = [
     "yuliiakuts@gmail.com",
-    "mayank.kr@pm.me"
+    "mayank.kr@pm.me",
+    
 ]
 
 # TODO: KNOWN_STUDENTS removed — roster now loaded from coursedb.cohortStudents

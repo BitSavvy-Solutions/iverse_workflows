@@ -1,7 +1,7 @@
 """
 src/etl/GenerateWeeklyReport/__init__.py
 ─────────────────────────────────────────
-Weekly mentor report for Alice (CodeBlossom).
+Weekly mentor report for Mentors (CodeBlossom).
 
 Reads slackUpdates for the previous Mon-Sun week from Cosmos DB,
 counts how many days each student posted, categorizes engagement,
@@ -22,6 +22,7 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 
+import requests
 import azure.functions as func
 from pymongo import MongoClient
 
@@ -35,7 +36,13 @@ COHORT_COL  = "cohortStudents"
 COURSE_ID   = "fullstack-2025"
 
 TEST_RECIPIENTS = [
-    "yuliiakuts@gmail.com"
+    "yuliiakuts@gmail.com",
+    "mayank.kr@pm.me",
+    "tamayodesh26@gmail.com",
+    "anumghulam38@gmail.com",
+    "sana.abbhaid@gmail.com",
+    "amusukwa@gmail.com",
+    "carolmkaysmamba14@gmail.com",
 ]
 
 # Engagement tiers
@@ -177,7 +184,84 @@ def _build_weekly_report(week_start: datetime, week_end: datetime) -> dict:
             "tierBreakdown": tier_counts,
         },
         "students": summaries,
+        "greeting": _generate_greeting(summaries, start_str, end_str, tier_counts, total),
     }
+
+
+# ── Greeting generator ────────────────────────────────────────────────────────
+
+def _generate_greeting(
+    summaries: list,
+    week_start: str,
+    week_end: str,
+    tier_counts: dict,
+    total: int,
+) -> str:
+    """
+    Generates a unique weekly greeting using OpenRouter (deepseek-chat).
+    Falls back to a default greeting if API call fails.
+    """
+    # Find most popular chapters this week
+    chapter_counts: dict[str, int] = {}
+    for s in summaries:
+        if s["chapter"] != "—":
+            chapter_counts[s["chapter"]] = chapter_counts.get(s["chapter"], 0) + 1
+
+    top_chapters = sorted(chapter_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+    chapters_str = ", ".join(f"{ch} ({n} learners)" for ch, n in top_chapters) or "various topics"
+
+    active = sum(1 for s in summaries if s["daysActive"] > 0)
+    stars  = tier_counts.get("star", 0)
+
+    prompt = f"""Write a short, warm and encouraging weekly greeting for mentors 
+supporting coding learners in Namibia through CodeBlossom.
+
+This week ({week_start} to {week_end}):
+- {active} out of {total} learners posted daily updates
+- {stars} learners were super active (5+ days!) 
+- Most studied topics: {chapters_str}
+
+Requirements:
+- 2-3 sentences only
+- Warm, personal, specific to the week's data
+- Reference Namibia or CodeBlossom naturally if it fits
+- 1-2 emojis max, no hashtags
+- Vary the tone and opening each time — never start with "Hey" or "Hi Alice"
+- End on an encouraging note for the mentoring team
+- No quotation marks of any kind
+- IMPORTANT: Return ONLY the greeting text itself, no alternatives, no variations, no asterisks, no markdown formatting, no quotes"""
+
+    try:
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}",
+                "HTTP-Referer": "https://aitut.iverse.com",
+                "X-Title": "AITut Weekly Report",
+            },
+            json={
+                "model": "deepseek/deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 80,
+                "temperature": 0.9,  # Higher = more creative variation each time
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        greeting = response.json()["choices"][0]["message"]["content"].strip()
+        logging.info(f"Generated greeting: {greeting[:80]}...")
+        return greeting
+
+    except Exception as e:
+        logging.error(f"Greeting generation failed: {type(e).__name__}: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        # Fallback greeting if OpenRouter fails
+        return (
+            f"Another week in the books! {active} out of {total} learners "
+            f"shared their progress this week 🌱 "
+            f"Keep up the amazing mentoring work!"
+        )
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -259,6 +343,16 @@ def _render_html(data: dict) -> str:
     <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:14px;">
       {data['weekStart']} → {data['weekEnd']} · CodeBlossom Full Stack Cohort · <em>Test mode</em>
     </p>
+  </td></tr>
+
+  <!-- Greeting -->
+  <tr><td style="padding:20px 32px 0;">
+    <div style="background:#21262d;border-radius:8px;padding:16px 20px;
+                border-left:3px solid #FF5F90;">
+      <p style="margin:0;color:#e6edf3;font-size:14px;line-height:1.6;font-style:italic;">
+        {data.get('greeting', '')}
+      </p>
+    </div>
   </td></tr>
 
   <!-- Stats -->
