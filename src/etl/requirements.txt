@@ -7,3 +7,7 @@ azure-storage-blob
 azure-communication-email
 jinja2
 slack-sdk
+langgraph
+langchain-openai
+langchain-core
+pydantic
