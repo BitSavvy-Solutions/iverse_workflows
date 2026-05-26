@@ -1,14 +1,5 @@
 """
 src/etl/ExtractDailyUpdates/__init__.py
-────────────────────────────────────────
-HTTP endpoint that uses LangGraph to extract structured dates and 
-content from raw Slack standup messages.
-
-Endpoint: POST /api/ExtractDailyUpdates
-Body: {
-    "raw_text": "What I did today 19-20 April...",
-    "message_date": "2026-04-21"
-}
 """
 
 import logging
@@ -26,11 +17,28 @@ from langgraph.graph import StateGraph, END
 # 1. Define the Data Structures (Pydantic)
 # ==========================================
 class DailyUpdate(BaseModel):
-    date: str = Field(description="The specific date for the update in YYYY-MM-DD format. If a range is given, use YYYY-MM-DD to YYYY-MM-DD.")
-    content: str = Field(description="The specific tasks, learnings, or updates completed on this date. Exclude noise like 'Blockers' or 'Tomorrow'.")
+    dates: List[str] = Field(
+        description="A list of specific dates for this update in YYYY-MM-DD format. "
+                    "If the student provides different updates for different days (e.g., 'yesterday' vs 'today'), "
+                    "you MUST create a SEPARATE object for each day. Only group dates in this array if the exact same update applies to multiple days."
+    )
+    updates: List[str] = Field(
+        description="A list of exact text items describing what the student DID. "
+                    "ONLY include completed work (e.g., 'today', 'yesterday'). "
+                    "DO NOT include future plans (e.g., 'tomorrow', 'what I will do'). "
+                    "EXTRACT THE EXACT ORIGINAL TEXT. DO NOT rephrase, summarize, or fix typos. "
+                    "Split multiple lines or distinct statements into separate items."
+    )
+    blockers: List[str] = Field(
+        description="A list of exact text items describing anything blocking the student. "
+                    "EXTRACT THE EXACT ORIGINAL TEXT. DO NOT rephrase, summarize, or fix typos. "
+                    "If there are no blockers mentioned, leave this array empty."
+    )
 
 class ExtractedUpdates(BaseModel):
-    updates: List[DailyUpdate] = Field(description="List of updates extracted from the message.")
+    extracted_data: List[DailyUpdate] = Field(
+        description="List of updates and blockers extracted from the message."
+    )
 
 # ==========================================
 # 2. Define the LangGraph State
@@ -45,8 +53,6 @@ class ExtractionState(TypedDict):
 # 3. Define the Node
 # ==========================================
 def extract_dates_and_content(state: ExtractionState) -> ExtractionState:
-    """Node that uses an LLM to extract structured dates and content."""
-    
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
         return {"errors": ["OPENROUTER_API_KEY is not set"]}
@@ -54,18 +60,21 @@ def extract_dates_and_content(state: ExtractionState) -> ExtractionState:
     llm = ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=api_key,
-        model="openai/gpt-4o-mini", # Fast, cheap, and great at structured JSON
+        model="google/gemini-3-flash-preview", 
         temperature=0
     )
     
     structured_llm = llm.with_structured_output(ExtractedUpdates)
     
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an AI assistant that extracts daily progress updates from student messages.\n"
+        ("system", "You are an AI assistant that extracts daily progress updates and blockers from student messages.\n"
                    "The message was posted on {message_date}. Use this to resolve relative words like 'today' or 'yesterday'.\n"
-                   "A student might report for a single day, a range of days, or list multiple days.\n"
-                   "Extract each distinct time period and its corresponding content.\n"
-                   "Clean up the content to only include what they actually did."),
+                   "CRITICAL INSTRUCTIONS:\n"
+                   "1. SEPARATE BY DAY: If the student reports different activities for different days (e.g., 'yesterday' vs 'today'), you MUST create a separate update object for each day.\n"
+                   "2. IGNORE FUTURE PLANS: ONLY extract work that has already been done. DO NOT extract what the student plans to do 'tomorrow' or in the future.\n"
+                   "3. Extract the completed daily updates into the 'updates' array. Each bullet point, line, or distinct statement should be its own item.\n"
+                   "4. Extract any reported blockers into the 'blockers' array. If they say 'None' or 'Nothing', include that exact text.\n"
+                   "5. DO NOT ALTER THE TEXT. You must extract the exact original text written by the user. Do not fix typos, do not rephrase, do not summarize."),
         ("user", "{raw_text}")
     ])
     
@@ -77,7 +86,7 @@ def extract_dates_and_content(state: ExtractionState) -> ExtractionState:
             "raw_text": state["raw_text"]
         })
         
-        updates = [update.model_dump() for update in result.updates]
+        updates = [update.model_dump() for update in result.extracted_data]
         return {"extracted_updates": updates, "errors": []}
         
     except Exception as e:
@@ -85,7 +94,7 @@ def extract_dates_and_content(state: ExtractionState) -> ExtractionState:
         return {"errors": [str(e)]}
 
 # ==========================================
-# 4. Build the Graph (Done globally)
+# 4. Build the Graph
 # ==========================================
 workflow = StateGraph(ExtractionState)
 workflow.add_node("extract", extract_dates_and_content)
@@ -118,7 +127,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    # Initialize state
     initial_state = ExtractionState(
         raw_text=raw_text,
         message_date=message_date,
@@ -126,7 +134,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         errors=[]
     )
 
-    # Run the LangGraph workflow
     try:
         result = app.invoke(initial_state)
     except Exception as e:
@@ -137,7 +144,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    # Handle errors from the node
     if result.get("errors"):
         return func.HttpResponse(
             json.dumps({"success": False, "error": result["errors"][0]}),
@@ -145,11 +151,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         )
 
-    # Return successful extraction
     return func.HttpResponse(
         json.dumps({
             "success": True,
-            "updates": result.get("extracted_updates", [])
+            "data": result.get("extracted_updates", [])
         }),
         status_code=200,
         mimetype="application/json"
