@@ -10,19 +10,16 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
-# Import the embedding and math helpers from your existing search service
 from shared.curriculum_search import _get_embedding, _cosine_similarity
 
 # ==========================================
 # 1. Define the Data Structures
 # ==========================================
-class ChapterMatch(BaseModel):
-    chapterId: Optional[str] = Field(description="The ID of the matched chapter. Null if no match.")
-    chapterTitle: Optional[str] = Field(description="The title of the matched chapter. Null if no match.")
-    materialId: Optional[str] = Field(description="The ID of the matched material. Null if no match.")
-    materialTitle: Optional[str] = Field(description="The title of the matched material. Null if no match.")
-    confidence: str = Field(description="Confidence level: 'high', 'medium', or 'low'.")
-    reasoning: str = Field(description="Briefly explain why this specific material was chosen over the others.")
+
+# This is the STRICT, tiny schema for the LLM to save output tokens
+class LLMDecision(BaseModel):
+    selected_material_id: Optional[str] = Field(description="The ID of the best matching material. Null if none match.")
+    confidence: str = Field(description="'high', 'medium', or 'low'")
 
 class MatchState(TypedDict):
     text_to_match: str
@@ -39,14 +36,11 @@ def vector_search_node(state: MatchState) -> MatchState:
     """Node 1: Get embeddings and find the Top 3 closest materials in Cosmos DB"""
     logging.info("Graph: Running Vector Search for Top 3")
     try:
-        # 1. Get embedding for the student's text
         query_embedding = _get_embedding(state["text_to_match"])
         
-        # 2. Connect to Cosmos DB
         client = MongoClient(os.environ["COSMOS_CONNECTION_STRING"])
         collection = client["coursedb"]["curriculumEmbeddings"]
         
-        # 3. Fetch all materials for this course
         materials = list(collection.find(
             {"courseId": state["course_id"]},
             {"chapterId": 1, "chapterTitle": 1, "materialId": 1, "materialTitle": 1, "embedding": 1}
@@ -56,7 +50,6 @@ def vector_search_node(state: MatchState) -> MatchState:
         if not materials:
             return {"errors": ["No materials found in DB for this course."]}
 
-        # 4. Calculate similarity scores
         scored = []
         for mat in materials:
             if not mat.get("embedding"): 
@@ -64,20 +57,16 @@ def vector_search_node(state: MatchState) -> MatchState:
             score = _cosine_similarity(query_embedding, mat["embedding"])
             scored.append((score, mat))
 
-        # 5. Sort highest to lowest
         scored.sort(key=lambda x: x[0], reverse=True)
         
-        # 6. Take the Top 3
         top_3 = []
         for score, mat in scored[:3]:
             top_3.append({
                 "chapterId": mat["chapterId"],
                 "chapterTitle": mat["chapterTitle"],
                 "materialId": mat["materialId"],
-                "materialTitle": mat["materialTitle"],
-                "vector_score": score
+                "materialTitle": mat["materialTitle"]
             })
-            logging.info(f"Top Match: {mat['materialTitle']} (Score: {score:.4f})")
         
         return {"top_matches": top_3}
 
@@ -104,27 +93,16 @@ def llm_decision_node(state: MatchState) -> MatchState:
         temperature=0
     )
     
-    structured_llm = llm.with_structured_output(ChapterMatch)
+    structured_llm = llm.with_structured_output(LLMDecision)
 
-    # Format the Top 3 options into a readable string for the prompt
+    # Highly condensed options text to save input tokens
     options_text = ""
-    for i, match in enumerate(state["top_matches"]):
-        options_text += f"Option {i+1}:\n"
-        options_text += f"- Chapter: {match['chapterTitle']} (ID: {match['chapterId']})\n"
-        options_text += f"- Material: {match['materialTitle']} (ID: {match['materialId']})\n"
-        options_text += f"- Vector Similarity Score: {match['vector_score']:.4f}\n\n"
+    for match in state["top_matches"]:
+        options_text += f"ID: {match['materialId']} | Material: {match['materialTitle']} | Chapter: {match['chapterTitle']}\n"
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an AI assistant that maps a student's daily update to the correct curriculum material.\n"
-                   "You are provided with the top 3 closest matches from our vector database.\n\n"
-                   "INSTRUCTIONS:\n"
-                   "1. Review the student's update.\n"
-                   "2. Review the 3 provided options.\n"
-                   "3. Select the option that BEST describes what the student actually worked on.\n"
-                   "4. If NONE of the options make sense (e.g., the update is just 'I was sick today' or 'Attended a meeting'), return null for all ID and Title fields.\n"
-                   "5. Provide your reasoning and a confidence score.\n\n"
-                   "OPTIONS:\n{options}"),
-        ("user", "Student Update: {text}")
+        ("system", "Map the student's update to the correct material ID from the options below. If none match, return null.\n\nOPTIONS:\n{options}"),
+        ("user", "Update: {text}")
     ])
 
     try:
@@ -134,14 +112,17 @@ def llm_decision_node(state: MatchState) -> MatchState:
             "text": state["text_to_match"]
         })
         
-        final_dict = result.model_dump()
-        
-        # If the LLM actually picked something, tag the method
-        if final_dict.get("chapterId"):
-            final_dict["matchMethod"] = "vector+llm"
-            return {"final_match": final_dict}
-        else:
-            return {"final_match": None}
+        # Reconstruct the full object in Python to save LLM output tokens
+        if result.selected_material_id:
+            # Find the full match object from our top_matches list
+            selected_match = next((m for m in state["top_matches"] if m["materialId"] == result.selected_material_id), None)
+            
+            if selected_match:
+                selected_match["confidence"] = result.confidence
+                selected_match["matchMethod"] = "vector+llm"
+                return {"final_match": selected_match}
+                
+        return {"final_match": None}
 
     except Exception as e:
         logging.error(f"LLM Decision failed: {e}")
@@ -175,12 +156,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400, mimetype="application/json"
         )
 
-    # Accept either a list of extracted updates OR raw text
     updates = body.get("updates", [])
     raw_text = body.get("raw_text", "")
     course_id = body.get("courseId", "fullstack-2025")
 
-    # Combine updates into a single string for matching
     if updates:
         text_to_match = "\n".join(updates)
     else:
