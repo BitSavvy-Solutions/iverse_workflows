@@ -16,14 +16,19 @@ from shared.curriculum_search import _get_embedding, _cosine_similarity
 # 1. Define the Data Structures
 # ==========================================
 
-# This is the STRICT, tiny schema for the LLM to save output tokens
+# Base schema (Fast, cheap, no reasoning)
 class LLMDecision(BaseModel):
     selected_material_id: Optional[str] = Field(description="The ID of the best matching material. Null if none match.")
     confidence: str = Field(description="'high', 'medium', or 'low'")
 
+# Expanded schema for debugging
+class LLMDecisionWithReasoning(LLMDecision):
+    reasoning: str = Field(description="1 short sentence explaining why this material was chosen.")
+
 class MatchState(TypedDict):
     text_to_match: str
     course_id: str
+    debug_reasoning: bool
     top_matches: List[dict]
     final_match: Optional[dict]
     errors: List[str]
@@ -93,7 +98,13 @@ def llm_decision_node(state: MatchState) -> MatchState:
         temperature=0
     )
     
-    structured_llm = llm.with_structured_output(LLMDecision)
+    # Dynamically choose schema and prompt based on debug flag
+    if state.get("debug_reasoning"):
+        structured_llm = llm.with_structured_output(LLMDecisionWithReasoning)
+        system_instruction = "Map the student's update to the correct material ID from the options below. If none match, return null.\nProvide a very brief, 1-sentence reasoning for your choice.\n\nOPTIONS:\n{options}"
+    else:
+        structured_llm = llm.with_structured_output(LLMDecision)
+        system_instruction = "Map the student's update to the correct material ID from the options below. If none match, return null.\n\nOPTIONS:\n{options}"
 
     # Highly condensed options text to save input tokens
     options_text = ""
@@ -101,7 +112,7 @@ def llm_decision_node(state: MatchState) -> MatchState:
         options_text += f"ID: {match['materialId']} | Material: {match['materialTitle']} | Chapter: {match['chapterTitle']}\n"
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "Map the student's update to the correct material ID from the options below. If none match, return null.\n\nOPTIONS:\n{options}"),
+        ("system", system_instruction),
         ("user", "Update: {text}")
     ])
 
@@ -120,6 +131,11 @@ def llm_decision_node(state: MatchState) -> MatchState:
             if selected_match:
                 selected_match["confidence"] = result.confidence
                 selected_match["matchMethod"] = "vector+llm"
+                
+                # Only add reasoning if it was requested
+                if state.get("debug_reasoning") and hasattr(result, "reasoning"):
+                    selected_match["reasoning"] = result.reasoning
+                    
                 return {"final_match": selected_match}
                 
         return {"final_match": None}
@@ -159,6 +175,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     updates = body.get("updates", [])
     raw_text = body.get("raw_text", "")
     course_id = body.get("courseId", "fullstack-2025")
+    debug_reasoning = body.get("debug_reasoning", False)
 
     if updates:
         text_to_match = "\n".join(updates)
@@ -174,6 +191,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     initial_state = MatchState(
         text_to_match=text_to_match,
         course_id=course_id,
+        debug_reasoning=debug_reasoning,
         top_matches=[],
         final_match=None,
         errors=[]
