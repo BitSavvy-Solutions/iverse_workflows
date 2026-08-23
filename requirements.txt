@@ -1,8 +1,0 @@
-azure-functions
-beautifulsoup4
-pymongo
-python-dotenv
-requests==2.32.5
-azure-storage-blob
-azure-communication-email
-jinja2
